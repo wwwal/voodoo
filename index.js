@@ -1,7 +1,9 @@
+require('dotenv').config();
 const express = require('express');
 const bodyParser = require('body-parser');
 const db = require('./models');
 const Sequelize = require('sequelize');
+const axios = require('axios');
 
 const app = express();
 
@@ -56,7 +58,7 @@ app.put('/api/games/:id', (req, res) => {
 app.post('/api/games/search', (req, res) => {
     const { name, platform } = req.body;
     const op = Sequelize.Op;
-    
+
     let where = {};
 
     if ("" !== name) {
@@ -65,7 +67,7 @@ app.post('/api/games/search', (req, res) => {
         }
     }
 
-    if("" !== platform){
+    if ("" !== platform) {
         where.platform = {
             [op.eq]: `${platform}`,
         }
@@ -74,12 +76,57 @@ app.post('/api/games/search', (req, res) => {
     return db.Game.findAll({
         where: where
     })
-    .then(games => res.send(games))
-    .catch((err) => {
-        console.log('***There was an error creating a game', JSON.stringify(err));
-        return res.status(400).send(err);
-    });
+        .then(games => res.send(games))
+        .catch((err) => {
+            console.log('***There was an error creating a game', JSON.stringify(err));
+            return res.status(400).send(err);
+        });
 });
+
+app.get('/api/games/populate', async (req, res) => {
+    try {
+        await db.Game.truncate();
+
+        const gamesJsonUrls = [
+            process.env.IOS_GAMES_JSON_URL,
+            process.env.ANDROID_GAMES_JSON_URL,
+        ];
+
+        let allGames = [];
+        
+        const fetchPromises = gamesJsonUrls.map(url => axios.get(url));
+        const responses = await Promise.all(fetchPromises);
+        
+        for (const response of responses) {
+            response.data.forEach(row => {
+                row.forEach(result => {
+                    const { name, publisher_id, os, bundle_id, version } = result;
+                    allGames.push({
+                        name,
+                        publisherId: publisher_id,
+                        platform: os,
+                        bundleId: bundle_id,
+                        storeId: bundle_id,
+                        appVersion: version,
+                        isPublished: true,
+                    });
+                });
+            });
+        }
+        
+        await db.Game.bulkCreate(allGames);
+
+        const games = await db.Game.findAll();
+        res.send(games);
+
+    } catch (error) {
+        console.error('Error populating the database:', error);
+        res.status(500).send('Error populating the database');
+    }
+});
+
+
+
 
 
 app.listen(3000, () => {
